@@ -388,6 +388,14 @@ u8 *describe_op(afl_state_t *afl, u8 new_bits, size_t max_description_len) {
 
   if (new_bits == 2) { strcat(ret, ",+cov"); }
 
+  // MY CHANGES START   
+  if (afl->grill_crash_id) { 
+    sprintf(ret + strlen(ret), ",+crash:%u", afl->grill_crash_id++); 
+  } else if (afl->grill_in_crash) {
+    strcat(ret, ",+crash");
+  }
+  // MY CHANGES END
+
   if (unlikely(strlen(ret) >= max_description_len))
     FATAL("describe string is too long");
 
@@ -818,7 +826,7 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
         simplify_trace(afl, afl->fsrv.trace_bits);
 
-        if (!has_new_bits(afl, afl->virgin_crash)) { return keeping; }
+        if (!(new_bits = has_new_bits(afl, afl->virgin_crash))) { return keeping; }
 
       }
 
@@ -830,7 +838,9 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
       }
 
 #ifndef SIMPLE_FILES
-
+      // MY CHANGES START   
+      afl->grill_in_crash = 1;
+      // MY CHANGES END
       if (!afl->afl_env.afl_sha1_filenames) {
 
         snprintf(fn, PATH_MAX, "%s/crashes/id:%06llu,sig:%02u,%s%s%s",
@@ -838,6 +848,15 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
                  describe_op(afl, 0, NAME_MAX - strlen("id:000000,sig:00,")),
                  afl->file_extension ? "." : "",
                  afl->file_extension ? (const char *)afl->file_extension : "");
+              // MY CHANGES START   
+            queue_fn = alloc_printf(
+                "%s/queue/id:%06u,%s%s%s", afl->out_dir, afl->queued_items,
+                describe_op(afl, new_bits + is_timeout,
+                            NAME_MAX - strlen("id:000000,")),
+                afl->file_extension ? "." : "",
+                afl->file_extension ? (const char *)afl->file_extension : "");
+              afl->grill_in_crash = 0;
+              // MY CHANGES END
 
       } else {
 
@@ -858,7 +877,76 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
 #endif                                                    /* ^!SIMPLE_FILES */
 
+      // MY CHANGES START   
+    fd = permissive_create(afl, queue_fn);
+    if (likely(fd >= 0)) {
+
+      ck_write(fd, mem, len, queue_fn);
+      close(fd);
+
+    }
+
+    add_to_queue(afl, queue_fn, len, 0);
+
+    if (unlikely(afl->fuzz_mode) &&
+        likely(afl->switch_fuzz_mode && !afl->non_instrumented_mode)) {
+
+      if (afl->afl_env.afl_no_ui) {
+
+        ACTF("New coverage found, switching back to exploration mode.");
+
+      }
+
+      afl->fuzz_mode = 0;
+
+    }
+      // MY CHANGES END
+
       ++afl->saved_crashes;
+
+    // MY CHANGES START
+    if (new_bits == 2) {
+
+      afl->queue_top->has_new_cov = 1;
+      ++afl->queued_with_cov;
+
+    }
+
+    if (unlikely(need_hash && new_bits)) {
+
+      /* due to classify counts we have to recalculate the checksum */
+      afl->queue_top->exec_cksum =
+          hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
+      need_hash = 0;
+
+    }
+
+    /* For AFLFast schedules we update the new queue entry */
+    if (likely(cksum)) {
+
+      afl->queue_top->n_fuzz_entry = cksum % N_FUZZ_SIZE;
+      afl->n_fuzz[afl->queue_top->n_fuzz_entry] = 1;
+
+    }
+
+    /* Try to calibrate inline; this also calls update_bitmap_score() when
+       successful. */
+    res = calibrate_case(afl, afl->queue_top, mem, afl->queue_cycle - 1, 0);
+
+    if (unlikely(res == FSRV_RUN_ERROR)) {
+
+      FATAL("Unable to execute target application");
+
+    }
+
+    if (likely(afl->q_testcase_max_cache_size)) {
+
+      queue_testcase_store_mem(afl, afl->queue_top, mem);
+
+    }
+    // MY CHANGES END
+
+      
 #ifdef INTROSPECTION
       if (afl->custom_mutators_count && afl->current_custom_fuzz) {
 

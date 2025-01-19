@@ -782,6 +782,11 @@ typedef struct afl_state {
 
   double stats_avg_exec;
 
+  // MY CHANGES
+  u8 grill_in_crash;
+  u32 grill_crash_id;
+  // END MY CHANGES
+
   u8 *clean_trace;
   u8 *clean_trace_custom;
   u8 *first_trace;
