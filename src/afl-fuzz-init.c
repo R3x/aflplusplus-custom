@@ -1042,6 +1042,154 @@ void perform_dry_run(afl_state_t *afl) {
 
         if (afl->crash_mode) { break; }
 
+        break;
+
+        // MY CHANGES START 
+          SAYF("\n" cLRD "[-] " cRST
+               "The program crashed with one of the test cases provided. Adding it to queue."
+          );
+
+          // // update queue entry
+          // if (!q->was_fuzzed) {
+
+          //   q->was_fuzzed = 1;
+          //   afl->reinit_table = 1;
+          //   // --afl->pending_not_fuzzed;
+          //   // --afl->active_items;
+
+          // }
+          u8 new_bits = 0;
+          u8* queue_fn = NULL;
+          u8 is_timeout = 0;
+          if (afl->afl_env.afl_crashing_seeds_as_new_crash) {
+
+            ++afl->total_crashes;
+
+            if (likely(!afl->non_instrumented_mode)) {
+
+              classify_counts(&afl->fsrv);
+
+              simplify_trace(afl, afl->fsrv.trace_bits);
+
+              if (!(new_bits = has_new_bits(afl, afl->virgin_crash))) { break; }
+
+            }
+
+            if (unlikely(!afl->saved_crashes) &&
+                (afl->afl_env.afl_no_crash_readme != 1)) {
+
+              write_crash_readme(afl);
+
+            }
+
+            u8  crash_fn[PATH_MAX];
+            u8 *use_name = strstr(q->fname, ",orig:");
+
+            afl->stage_name = "dry_run";
+            afl->stage_short = "dry_run";
+
+  #ifndef SIMPLE_FILES
+
+            if (!afl->afl_env.afl_sha1_filenames) {
+
+              afl->grill_in_crash = 1;
+              snprintf(
+                  crash_fn, PATH_MAX, "%s/crashes/id:%06llu,sig:%02u,%s%s%s%s",
+                  afl->out_dir, afl->saved_crashes, afl->fsrv.last_kill_signal,
+                  describe_op(
+                      afl, 0,
+                      NAME_MAX - strlen("id:000000,sig:00,") - strlen(use_name)),
+                  use_name, afl->file_extension ? "." : "",
+                  afl->file_extension ? (const char *)afl->file_extension : "");
+              // queue_fn = alloc_printf(
+              //     "%s/queue/id:%06u,%s%s%s", afl->out_dir, afl->queued_items,
+              //     describe_op(afl, new_bits + is_timeout,
+              //                 NAME_MAX - strlen("id:000000,")),
+              //     afl->file_extension ? "." : "",
+              //     afl->file_extension ? (const char *)afl->file_extension : "");
+              afl->grill_in_crash = 0;
+              // MY CHANGES END
+            } else {
+
+              const char *hex = sha1_hex(use_mem, read_len);
+              snprintf(
+                  crash_fn, PATH_MAX, "%s/crashes/%s%s%s", afl->out_dir, hex,
+                  afl->file_extension ? "." : "",
+                  afl->file_extension ? (const char *)afl->file_extension : "");
+              ck_free((char *)hex);
+
+            }
+
+  #else
+
+            snprintf(
+                crash_fn, PATH_MAX, "%s/crashes/id_%06llu_%02u%s%s", afl->out_dir,
+                afl->saved_crashes, afl->fsrv.last_kill_signal,
+                afl->file_extension ? "." : "",
+                afl->file_extension ? (const char *)afl->file_extension : "");
+
+  #endif
+
+            ++afl->saved_crashes;
+
+          // // NEW
+          // fd = permissive_create(afl, queue_fn);
+          // if (likely(fd >= 0)) {
+          //   ck_write(fd, use_mem, read_len, queue_fn);
+          //   close(fd);
+
+          // }
+
+          // add_to_queue(afl, queue_fn, read_len, 0);
+          //   // END
+
+
+
+            fd = open(crash_fn, O_WRONLY | O_CREAT | O_EXCL, DEFAULT_PERMISSION);
+            if (unlikely(fd < 0)) { PFATAL("Unable to create '%s'", crash_fn); }
+            ck_write(fd, use_mem, read_len, crash_fn);
+            close(fd);
+
+            afl->last_crash_time = get_cur_time();
+            afl->last_crash_execs = afl->fsrv.total_execs;
+
+          } else {
+
+            u32 i = 0;
+            while (unlikely(i < afl->queued_items && afl->queue_buf[i] &&
+                            afl->queue_buf[i]->disabled)) {
+
+              ++i;
+
+            }
+
+            if (i < afl->queued_items && afl->queue_buf[i]) {
+
+              afl->queue = afl->queue_buf[i];
+
+            } else {
+
+              afl->queue = afl->queue_buf[0];
+
+            }
+
+            afl->max_depth = 0;
+            for (i = 0; i < afl->queued_items && likely(afl->queue_buf[i]); i++) {
+
+              if (!afl->queue_buf[i]->disabled &&
+                  afl->queue_buf[i]->depth > afl->max_depth)
+                afl->max_depth = afl->queue_buf[i]->depth;
+
+            }
+
+          }
+
+          break;
+
+        // MY CHANGES END
+
+
+/*
         if (afl->fsrv.mem_limit) {
 
           u8 val_buf[STRINGIFY_VAL_SIZE_MAX];
@@ -1116,7 +1264,6 @@ void perform_dry_run(afl_state_t *afl) {
                "troubleshooting tips.\n");
 
         }
-
 #undef MSG_ULIMIT_USAGE
 #undef MSG_FORK_ON_APPLE
 
@@ -1151,8 +1298,6 @@ void perform_dry_run(afl_state_t *afl) {
 
         }
 
-        /* Remove from fuzzing queue but keep for splicing */
-
         if (!q->was_fuzzed) {
 
           q->was_fuzzed = 1;
@@ -1162,7 +1307,7 @@ void perform_dry_run(afl_state_t *afl) {
 
         }
 
-        /* Crashing seeds will be regarded as new crashes on startup */
+        // Crashing seeds will be regarded as new crashes on startup 
         if (afl->afl_env.afl_crashing_seeds_as_new_crash) {
 
           ++afl->total_crashes;
@@ -1295,6 +1440,7 @@ void perform_dry_run(afl_state_t *afl) {
         q->perf_score = 0;
 
         break;
+*/
 
       case FSRV_RUN_ERROR:
 
