@@ -888,6 +888,10 @@ u8 __attribute__((hot)) save_if_interesting(afl_state_t *afl, void *mem,
 
     add_to_queue(afl, queue_fn, len, 0);
 
+    /* RITVIK: Crash-derived entries produce incomplete/unstable traces - cmplog
+       colorization and ITS would generate garbage data, so skip it. */
+    afl->queue_top->colorized = CMPLOG_LVL_MAX;
+
     if (unlikely(afl->fuzz_mode) &&
         likely(afl->switch_fuzz_mode && !afl->non_instrumented_mode)) {
 
